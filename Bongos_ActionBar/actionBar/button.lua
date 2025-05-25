@@ -24,6 +24,130 @@ local function ReuseAndRename(oldName, newName, newParent)
 	return button
 end
 
+local spellmaxrank = {}
+function GetSpellMaxRank(name)
+  local cache = spellmaxrank[name]
+  if cache then return cache[1], cache[2] end
+  local name = string.lower(name)
+
+  local rank = { 0, nil}
+  for i = 1, GetNumSpellTabs() do
+    local _, _, offset, num = GetSpellTabInfo(i)
+    local bookType = BOOKTYPE_SPELL
+    for id = offset + 1, offset + num do
+      local spellName, spellRank = GetSpellName(id, bookType)
+      if name == string.lower(spellName) then
+        if not rank[2] then rank[2] = spellRank end
+
+        local _, _, numRank = string.find(spellRank, " (%d+)$")
+        if numRank and tonumber(numRank) > rank[1] then
+          rank = { tonumber(numRank), spellRank}
+        end
+      end
+    end
+  end
+
+  spellmaxrank[name] = { rank[2], rank[1] }
+  return rank[2], rank[1]
+end
+
+local spellindex = {}
+function GetSpellIndex(name, rank)
+  name = string.lower(name)
+  local cache = spellindex[name..(rank and ("("..rank..")") or "")]
+  if cache then return cache[1], cache[2] end
+
+  if not rank then rank = GetSpellMaxRank(name) end
+
+  for i = 1, GetNumSpellTabs() do
+    local _, _, offset, num = GetSpellTabInfo(i)
+    local bookType = BOOKTYPE_SPELL
+    for id = offset + 1, offset + num do
+      local spellName, spellRank = GetSpellName(id, bookType)
+      if rank and rank == spellRank and name == string.lower(spellName) then
+        spellindex[name.."("..rank..")"] = { id, bookType }
+        return id, bookType
+      elseif not rank and name == string.lower(spellName) then
+        spellindex[name] = { id, bookType }
+        return id, bookType
+      end
+    end
+  end
+
+  spellindex[name..(rank and ("("..rank..")") or "")] = { nil }
+  return nil
+end
+
+function CheckForMacro(button)
+	local macro = GetActionText(button.GetID())
+	button.spellSlot = nil
+	button.bookType = nil
+	if macro then
+		local slot = GetMacroIndexByName(macro)
+		local name, _, body = GetMacroInfo(slot)
+
+		if name and body then
+			local match
+
+			local playerName,_ = UnitName("player")
+
+			for line in string.gmatch(body, "[^%\n]+") do
+				_, _, match = string.find(line, '^#showtooltip (.+)')
+
+				-- allow the user to disable the scan
+				if match and strfind(match, "disable") then
+					break
+				end
+
+				if not match then
+					-- add support to specify custom tooltips via:
+					--  /run --showtooltip SPELLNAME
+					_, _, match = string.find(line, '%-%-showtooltip (.+)')
+				end
+
+				if not match then
+					_, _, match = string.find(line, '^/cast (.+)')
+				end
+
+				if not match then
+					_, _, match = string.find(line, '^/pfcast (.+)')
+				end
+
+				if not match then
+					_, _, match = string.find(line, '^/pfmouse (.+)')
+				end
+
+				if not match then
+					_, _, match = string.find(line, 'CastSpellByName%(%"(.+)%"%)')
+				end
+				
+				if match then
+					button.isHolyStrike = false
+					local sInd,_,_ = string.find(playerName, "Soinus")
+					if sInd == 1  then
+						sInd,_,_ = string.find(match, "Holy Strike")
+						if sInd == 1 then
+							button.isHolyStrike = true
+						end
+					end 
+
+					local _, _, spell, rank = string.find(match, '(.+)%((.+)%)')
+					spell = spell or match
+					button.spellSlot, button.bookType = GetSpellIndex(spell, rank)
+
+					if button.spellSlot and button.spellSlot > 0 then
+						break 
+					end
+				end
+			end
+		end
+	end
+end
+
+function HandleCHARACTER_POINTS_CHANGED(number)
+	print("this shit works")
+end
+
 BActionButton = {
 	--[[ Constructor Functions ]]--
 
@@ -65,6 +189,8 @@ BActionButton = {
 		BActionButton.UpdateHotkey(button)
 		BActionButton.SetScripts(button)
 
+		CheckForMacro(button)
+
 		return button
 	end,
 
@@ -92,6 +218,10 @@ BActionButton = {
 		if BActionSets_IsQuickMoveKeyDown() or bg_showGrid then
 			PickupAction(pagedID)
 		else
+			--CHARACTER_POINTS_CHANGED doesn't fire when we use the brainwashing device, 
+			--so for now we check for changes here
+			CheckForMacro(this)
+
 			if MacroFrame_SaveMacro then
 				MacroFrame_SaveMacro()
 			end
@@ -221,7 +351,7 @@ BActionButton = {
 		end
 
 		--update cooldown/usability if there's an action
-		if HasAction(pagedID) then
+		if HasAction(pagedID) or button.spellSlot then
 			button:Show()
 			BActionButton.UpdateUsable(button)
 			BActionButton.UpdateCooldown(button)
@@ -277,7 +407,13 @@ BActionButton = {
 
 	--Update the cooldown timer
 	UpdateCooldown = function(button)
-		local start, duration, enable = GetActionCooldown(BActionButton.GetPagedID(button:GetID()))
+		local start, duration, enable
+		if button.spellSlot then
+			start, duration = GetSpellCooldown(button.spellSlot, button.bookType)
+      		enable = 1
+		else
+			start, duration, enable = GetActionCooldown(BActionButton.GetPagedID(button:GetID()))
+		end
 		CooldownFrame_SetTimer(getglobal(button:GetName().."Cooldown"), start, duration, enable)
 	end,
 
