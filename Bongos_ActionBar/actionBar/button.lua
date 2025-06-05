@@ -215,13 +215,13 @@ BActionButton = {
 	OnClick = function()
 		local pagedID = BActionButton.GetPagedID(this:GetID())
 
+		--CHARACTER_POINTS_CHANGED doesn't fire when we use the brainwashing device, 
+		--so for now we check for changes here
+		CheckForMacro(this)
+
 		if BActionSets_IsQuickMoveKeyDown() or bg_showGrid then
 			PickupAction(pagedID)
 		else
-			--CHARACTER_POINTS_CHANGED doesn't fire when we use the brainwashing device, 
-			--so for now we check for changes here
-			CheckForMacro(this)
-
 			if MacroFrame_SaveMacro then
 				MacroFrame_SaveMacro()
 			end
@@ -244,6 +244,7 @@ BActionButton = {
 
 	OnReceiveDrag = function()
 		PlaceAction(BActionButton.GetPagedID(this:GetID()))
+		CheckForMacro(this)
 		BActionButton.UpdateState(this)
 	end,
 
